@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Asset Map</title>
+<link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+<script src="https://js.arcgis.com/4.31/"></script>
+<style>
+  html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
+  #err {
+    display: none; position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: #fff3f0; color: #7a1f10; border: 1px solid #e0a89c; padding: 10px 14px;
+    border-radius: 4px; font: 14px/1.4 system-ui, sans-serif; z-index: 10; max-width: 90%;
+  }
+</style>
+</head>
+<body>
+<div id="viewDiv"></div>
+<div id="err"></div>
+
+<script>
+  // ---- CONFIG: replace with your web map's item ID ----
+  const WEBMAP_ITEM_ID = "YOUR_WEBMAP_ITEM_ID";
+  // If you use an enterprise portal, set its URL here; leave for ArcGIS Online.
+  const PORTAL_URL = "https://www.arcgis.com";
+  // -----------------------------------------------------
+
+  require([
+    "esri/config", "esri/WebMap", "esri/views/MapView",
+    "esri/widgets/Home", "esri/widgets/Search", "esri/widgets/Locate",
+    "esri/widgets/BasemapGallery", "esri/widgets/LayerList", "esri/widgets/Expand",
+    "esri/geometry/support/webMercatorUtils", "esri/geometry/geometryEngine"
+  ], function (esriConfig, WebMap, MapView, Home, Search, Locate, BasemapGallery, LayerList, Expand, wmUtils, geometryEngine) {
+
+    esriConfig.portalUrl = PORTAL_URL;
+
+    const webmap = new WebMap({ portalItem: { id: WEBMAP_ITEM_ID } });
+    const view = new MapView({ container: "viewDiv", map: webmap });
+
+    // Show a readable message if the map fails to load (usually sharing settings)
+    webmap.load().catch((e) => {
+      const el = document.getElementById("err");
+      el.textContent = "Could not load the web map. Check the item ID and that the map and its layers are shared publicly. (" + (e.message || e) + ")";
+      el.style.display = "block";
+    });
+
+    // ---- Widgets ----
+    view.ui.add(new Home({ view }), "top-left");
+    view.ui.add(new Locate({ view }), "top-left");
+    view.ui.add(new Expand({ view, content: new Search({ view }), expandIcon: "search", group: "top-right" }), "top-right");
+    view.ui.add(new Expand({ view, content: new LayerList({ view }), expandIcon: "layers", group: "top-right" }), "top-right");
+    view.ui.add(new Expand({ view, content: new BasemapGallery({ view }), expandIcon: "basemap", group: "top-right" }), "top-right");
+
+    // ---- Google Maps navigation ----
+    // Returns a lat/lng for any geometry type (point, line, polygon).
+    function destinationOf(geometry) {
+      let g = geometry;
+      if (g.type === "point") {
+        // fall through
+      } else if (g.type === "polygon") {
+        g = g.centroid;
+      } else if (g.type === "polyline") {
+        // use the middle vertex of the longest path
+        const path = g.paths.reduce((a, b) => (b.length > a.length ? b : a));
+        const mid = path[Math.floor(path.length / 2)];
+        g = { type: "point", x: mid[0], y: mid[1], spatialReference: g.spatialReference };
+      } else {
+        g = g.extent ? g.extent.center : null;
+      }
+      if (!g) return null;
+      const pt = g.spatialReference && g.spatialReference.isWGS84
+        ? g
+        : wmUtils.webMercatorToGeographic(g);
+      return { lat: pt.y, lng: pt.x };
+    }
+
+    function navigateToFeature(feature) {
+      const d = destinationOf(feature.geometry);
+      if (!d) return;
+      // No origin = Google Maps uses the user's current location.
+      const url = "https://www.google.com/maps/dir/?api=1&destination=" +
+        d.lat.toFixed(6) + "," + d.lng.toFixed(6) + "&travelmode=driving";
+      window.open(url, "_blank", "noopener");
+    }
+
+    const navigateAction = {
+      title: "Navigate in Google Maps",
+      id: "navigate-google",
+      icon: "navigation"
+    };
+
+    // Add the action to the popup of every feature layer in the web map.
+    webmap.when(() => {
+      webmap.allLayers.forEach((layer) => {
+        if (layer.type === "feature" || layer.type === "map-image") {
+          layer.popupEnabled = layer.popupEnabled !== false;
+        }
+      });
+      // Popup actions are set on the view popup, so they appear for all layers.
+      view.popup.actions.push(navigateAction);
+    });
+
+    view.popup.on("trigger-action", (event) => {
+      if (event.action.id === "navigate-google") {
+        navigateToFeature(view.popup.selectedFeature);
+      }
+    });
+  });
+</script>
+</body>
+</html>
